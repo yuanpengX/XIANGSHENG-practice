@@ -12,7 +12,7 @@ from utils import *
 
 # To utilizer keras interfaces
 import keras
-from keras.layers import Conv2D,Input,Lambda, Add, ConvLSTM2D
+from keras.layers import Conv2D,Input,Lambda, Add, ConvLSTM2D,Reshape
 from keras import regularizers
 from keras.layers.normalization import BatchNormalization
 from keras.layers.advanced_activations import LeakyReLU
@@ -36,10 +36,35 @@ def SRMD(t_image, is_train=True, reuse=False, C = 1, scale = 2):
         n = InputLayer(t_image, name='in')
         for i in range(MIDDLE_STACK):
             n = Conv2d(n, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='n%d/c'%i)
-            n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b'%i)
+            #n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b'%i)
 
         # super resolution parts
         n = Conv2d(n, scale*scale*C, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='n256s1/2')
+        n = SubpixelConv2d(n, scale=scale, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object
+        return n
+
+def SRMD_valid(t_image, is_train=True, reuse=False, C = 1, scale = 2):
+    """
+    Super resolution with degradtion.
+
+    Tensorlayer implementation of the SRMD 
+
+    Main model code
+    """
+    w_init = tf.random_normal_initializer(stddev=0.02)
+    b_init = None
+    g_init = tf.random_normal_initializer(1., 0.02)
+    lrelu = lambda x: tl.act.lrelu(x, 0.2)
+
+    with tf.variable_scope("SRMD", reuse=reuse) as vs:
+        # tl.layers.set_name_reuse(reuse) # remove for TL 1.8.0+
+        n = InputLayer(t_image, name='in')
+        for i in range(MIDDLE_STACK - 1):
+            n = Conv2d(n, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='VALID', W_init=w_init, name='n%d/c'%i)
+            n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b'%i)
+
+        # super resolution parts
+        n = Conv2d(n, scale*scale*C, (3, 3), (1, 1), act=None, padding='VALID', W_init=w_init, name='n256s1/2')
         n = SubpixelConv2d(n, scale=scale, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object
         return n
         
@@ -60,13 +85,12 @@ def SRMD_binary(t_image, is_train=True, reuse=False, C = 1, scale = 2):
         # tl.layers.set_name_reuse(reuse) # remove for TL 1.8.0+
         n = InputLayer(t_image, name='in')
         for i in range(MIDDLE_STACK):
-            n = BinaryConv2d(n, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='SAME', name='n%d/c'%i)
+            n = TernaryConv2d(n, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='SAME', name='n%d/c'%i)
             n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b'%i)
 
         # super resolution parts
-        n = BinaryConv2d(n, scale*scale*C, (3, 3), (1, 1), act=None, padding='SAME',name='n256s1/2')
+        n = TernaryConv2d(n, scale*scale*C, (3, 3), (1, 1), act=None, padding='SAME',name='n256s1/2')
         n = SubpixelConv2d(n, scale=scale, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object
-        print(n.all_params)
         return n
         
 def SRMD_keras(is_train=True, reuse=False, C = 1, scale = 2):
@@ -206,6 +230,50 @@ def RecurrentModel_keras(is_train = True, C = 1, scale = 2):
     model.compile(loss='mse', optimizer=adam)
     
     return model
+
+def RecurrentModel_onetime_keras(is_train = True, C = 1, scale = 2):
+    '''
+    To implement classical convolutional LSTM structure
+    '''
+    t_image = Input((HEIGHT, WIDTH, C + T), batch_shape = (BATCH_SIZE, HEIGHT, WIDTH, C + T))
+    
+    # Build an EDSR here
+    first_conv = Conv2D(MIDDLE_CHANNEL, (3,3), strides = (1, 1), activation = PRELU(), padding = 'SAME', data_format = 'channels_last', input_shape = (BATCH_SIZE, HEIGHT, WIDTH, C + T))(t_image)
+    
+    pre = first_conv
+    for i in range(RES_BLOCK):
+        n = Conv2D(MIDDLE_CHANNEL, (3,3), strides = (1, 1), activation = PRELU(), padding = 'SAME', data_format = 'channels_last')(pre)
+        n = Conv2D(MIDDLE_CHANNEL, (3,3), strides = (1, 1), activation = PRELU(), padding = 'SAME', data_format = 'channels_last')(n)
+        pre = Add()([n, pre])
+        
+    pre = Conv2D(MIDDLE_CHANNEL, (3,3), strides = (1, 1), activation = PRELU(), padding = 'SAME', data_format = 'channels_last')(pre)
+    features = Add()([pre, first_conv,])
+    
+    # Use this to construct statefull LSTM that has 1 timesteps
+    lstm1 = ConvLSTM2D(MIDDLE_CHANNEL, (3,3), batch_input_shape = (BATCH_SIZE, 1, HEIGHT, WIDTH, MIDDLE_CHANNEL), padding = 'SAME', data_format = 'channels_last',recurrent_activation = PRELU(), activation = PRELU(), stateful = True, return_sequences = False)        
+    #stack = Lambda(lambda x:tf.keras.backend.stack(x, axis = 1))
+    
+    concat = Reshape((1,HEIGHT,WIDTH, MIDDLE_CHANNEL))(features)
+    #concat = stack(list([features,]))
+    recur = lstm1(concat)
+    
+    # SubpixelConv2d for super resolution
+    conv = Conv2D(C * scale * scale , (3,3),strides = (1, 1), activation = PRELU(max_value = 1), padding = 'SAME', data_format = 'channels_last')    
+    feature_last = conv(recur)    
+    subpix  = Lambda(lambda x: tf.depth_to_space(x, SCALE))
+    hr = subpix(feature_last)
+
+    # trainning setting
+    adam = keras.optimizers.Adam(lr=1e-3, beta_1=0.9, beta_2=0.999, epsilon=1e-08)
+    model = keras.models.Model(inputs = t_image, outputs = hr)
+    
+    model.summary()
+    
+    #optimizer = keras.optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-08)
+    
+    model.compile(loss='mse', optimizer=adam)
+    
+    return model
     
 def RecurrentModel_reuse(image, is_train=True, reuse=False):
     '''
@@ -248,7 +316,7 @@ def RecurrentModel(t_image,pre_image, pre_pre_image, is_train=True, reuse=False)
         pre_features, pre_firts = RecurrentModel_reuse(pre_input, is_train = True, reuse = True)
         pre_pre_features, pre_pre_first = RecurrentModel_reuse(pre_input, is_train = True, reuse = True)
         
-        stack = StackLayer([t_features, pre_features, pre_pre_features], axis=1, name='stack')
+        stack = StackLayer([pre_pre_features, pre_features, t_features], axis=1, name='stack')
         
         time_features = ConvLSTMLayer(stack, (32,40), n_steps=2, name = 'lstm1', return_last = False, feature_map = MIDDLE_CHANNEL)
         
@@ -302,20 +370,81 @@ def RecurrentModel_bn(t_image,pre_image, pre_pre_image, is_train=True, reuse=Fal
         
         t_features, t_firt = RecurrentModel_bn_reuse(t_input, is_train = True, reuse = False)
         pre_features, pre_firts = RecurrentModel_bn_reuse(pre_input, is_train = True, reuse = True)
-        pre_pre_features, pre_pre_first = RecurrentModel_bn_reuse(pre_input, is_train = True, reuse = True)
+        pre_pre_features, pre_pre_first = RecurrentModel_bn_reuse(pre_pre_input, is_train = True, reuse = True)
         
-        stack = StackLayer([t_features, pre_features, pre_pre_features], axis=1, name='stack')
+        stack = StackLayer([pre_pre_features, pre_features, t_features], axis=1, name='stack')
         
-        time_features = ConvLSTMLayer(stack, (32,40), n_steps=2, name = 'lstm1', return_last = False, feature_map = MIDDLE_CHANNEL)
+        time_features = ConvLSTMLayer(stack, (32, 32), n_steps = 3, name = 'lstm1', return_last = False, feature_map = MIDDLE_CHANNEL)
         
-        low_res_features = ConvLSTMLayer(time_features, (32,40), n_steps=2, name = 'lstm2', return_last = True, feature_map = MIDDLE_CHANNEL)
+        low_res_features = ConvLSTMLayer(time_features, (32, 32), n_steps = 3, name = 'lstm2', return_last = True, feature_map = MIDDLE_CHANNEL)
         
-        low_res_features =  ElementwiseLayer([t_firt, low_res_features], combine_fn=tf.add, name='outadd')
+        low_res_features =  ElementwiseLayer([t_firt, low_res_features], combine_fn = tf.add, name='outadd')
                 
         hr = Conv2d(low_res_features, SCALE*SCALE*C, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='lastconv')
         hr = SubpixelConv2d(hr, scale=SCALE, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object
         return hr
+        
+def RecurrentModel_seplstm(t_image,pre_image, pre_pre_image, is_train=True, reuse=False):
+    
+    w_init = tf.random_normal_initializer(stddev=0.02)
+    b_init = None
+    g_init = tf.random_normal_initializer(1., 0.02)
+    lrelu = lambda x: tf.nn.leaky_relu(x, 0.2)
 
+    with tf.variable_scope("RecurrentModel_bn", reuse=reuse) as vs:
+        # tl.layers.set_name_reuse(reuse) # remove for TL 1.8.0+
+        t_input = InputLayer(t_image, name='t')
+        pre_input = InputLayer(pre_image, name='pre')
+        pre_pre_input = InputLayer(pre_pre_image, name='pre_pre')
+        
+        t_features, t_firt = RecurrentModel_bn_reuse(t_input, is_train = True, reuse = False)
+        pre_features, pre_firts = RecurrentModel_bn_reuse(pre_input, is_train = True, reuse = True)
+        pre_pre_features, pre_pre_first = RecurrentModel_bn_reuse(pre_pre_input, is_train = True, reuse = True)
+        
+        stack = StackLayer([pre_pre_features, pre_features, t_features], axis=1, name='stack')
+        
+        time_features = ConvLSTMLayer(stack, (32,32), cell_fn = SeperableConvLSTMCell, n_steps = 3, name = 'lstm1', return_last = False, feature_map = int(MIDDLE_CHANNEL / 4))
+        
+        low_res_features = ConvLSTMLayer(time_features, (32,32), cell_fn = SeperableConvLSTMCell, n_steps = 3, name = 'lstm2', return_last = True, feature_map = int(MIDDLE_CHANNEL / 16))        
+        low_res_features = Conv2d(low_res_features, MIDDLE_CHANNEL, (1, 1), (1, 1), act=None, padding='SAME', W_init=w_init, name='lowconv')
+        
+        low_res_features =  ElementwiseLayer([t_firt, low_res_features], combine_fn=tf.add, name='outadd')
+               
+        hr = Conv2d(low_res_features, SCALE*SCALE*C, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='lastconv')
+        hr = SubpixelConv2d(hr, scale=SCALE, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object
+        return hr
+
+def RecurrentModel_single(t_image, is_train=True, reuse=False):
+    
+    w_init = tf.random_normal_initializer(stddev=0.02)
+    b_init = None
+    g_init = tf.random_normal_initializer(1., 0.02)
+    lrelu = lambda x: tf.nn.leaky_relu(x, 0.2)
+
+    with tf.variable_scope("RecurrentModel_bn", reuse=reuse) as vs:
+        # tl.layers.set_name_reuse(reuse) # remove for TL 1.8.0+
+        t_input = InputLayer(t_image, name='t')        
+        
+        t_features, t_firt = RecurrentModel_bn_reuse(t_input, is_train = True, reuse = False)
+        #pre_features, pre_firts = RecurrentModel_bn_reuse(pre_input, is_train = True, reuse = True)
+        #pre_pre_features, pre_pre_first = RecurrentModel_bn_reuse(pre_pre_input, is_train = True, reuse = True)
+        
+        #stack = StackLayer([t_features, ], axis=1, name='stack')
+        stack = ReshapeLayer(t_features, [-1, 1,32, 32, MIDDLE_CHANNEL], name='reshape')
+        
+        lstm1 = ConvLSTMLayer(stack, (32,32), n_steps = 1, name = 'lstm1', return_last = False, feature_map =MIDDLE_CHANNEL)
+        
+        lstm2 = ConvLSTMLayer(lstm1, (32,32), n_steps = 1, name = 'lstm2', return_last = True, feature_map = MIDDLE_CHANNEL)        
+        
+        low_res_features = Conv2d(lstm2 , MIDDLE_CHANNEL, (1, 1), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='lowconv')
+        
+        low_res_features =  ElementwiseLayer([t_firt, low_res_features], combine_fn=tf.add, name='outadd')
+               
+        hr = Conv2d(low_res_features, SCALE*SCALE*C, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='lastconv')
+        hr = SubpixelConv2d(hr, scale=SCALE, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object
+        return hr, lstm1, lstm2
+
+        
 def RecurrentModel_bn_relu_reuse(image, is_train=True, reuse=False):
     '''
     This layer is the initial layer for all models
@@ -333,13 +462,13 @@ def RecurrentModel_bn_relu_reuse(image, is_train=True, reuse=False):
         pre = first_conv
         for i in range(RES_BLOCK):
             n = Conv2d(pre, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='n%d/c'%i)
-            n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b1'%i)
-            n = Conv2d(n, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='noact%d/c'%i)
-            n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b2'%i)
+            #n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b1'%i)
+            n = Conv2d(n, MIDDLE_CHANNEL, (1, 1), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='noact%d/c'%i)
+            #n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='n%d/b2'%i)
             n = ElementwiseLayer([n, pre], combine_fn=tf.add, name='add%d'%i)
             pre = n
-        n = Conv2d(n, MIDDLE_CHANNEL, (3, 3), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='conv2')
-        n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='outbn')
+        n = Conv2d(n, MIDDLE_CHANNEL, (1, 1), (1, 1), act=lrelu, padding='SAME', W_init=w_init, name='conv2')
+        #n = BatchNormLayer(n, is_train=is_train, gamma_init=g_init, name='outbn')
         n = ElementwiseLayer([n, first_conv], combine_fn=tf.add, name='outadd')
         return n, first_conv
         
@@ -356,17 +485,32 @@ def RecurrentModel_bn_relu(t_image,pre_image, pre_pre_image, is_train=True, reus
         pre_input = InputLayer(pre_image, name='pre')
         pre_pre_input = InputLayer(pre_pre_image, name='pre_pre')
         
-        t_features, t_firt = RecurrentModel_bn_relu_reuse(t_input, is_train = True, reuse = False)
-        pre_features, pre_firts = RecurrentModel_bn_relu_reuse(pre_input, is_train = True, reuse = True)
-        pre_pre_features, pre_pre_first = RecurrentModel_bn_relu_reuse(pre_input, is_train = True, reuse = True)
+        t_features, t_firt = RecurrentModel_bn_relu_reuse(t_input, is_train = is_train, reuse = False)
+        pre_features, pre_firts = RecurrentModel_bn_relu_reuse(pre_input, is_train = is_train, reuse = True)
+        pre_pre_features, pre_pre_first = RecurrentModel_bn_relu_reuse(pre_input, is_train = is_train, reuse = True)
         
-        stack = StackLayer([t_features, pre_features, pre_pre_features], axis=1, name='stack')
         
-        time_features = ConvLSTMLayer(stack, (32,40), n_steps=2, name = 'lstm1', return_last = False, feature_map = MIDDLE_CHANNEL)
+        time_features = ConcatLayer([pre_pre_features,pre_features, t_features,  ],  concat_dim=-1, name='concat')
         
-        low_res_features = ConvLSTMLayer(time_features, (32,40), n_steps=2, name = 'lstm2', return_last = True, feature_map = MIDDLE_CHANNEL)
+        # use dislation to add reception field
         
-        low_res_features =  ElementwiseLayer([t_firt, low_res_features], combine_fn=tf.add, name='outadd')
+        # This is used for the time domain info
+        f1 = Conv2d(time_features, MIDDLE_CHANNEL, (1, 1), (1, 1), dilation_rate=(1, 1), act=lrelu, padding='SAME', W_init=w_init, name='f1')
+        
+        # Extract More large information
+        f2 = Conv2d(f1, MIDDLE_CHANNEL, (3, 3), (1, 1), dilation_rate=(2, 2), act=lrelu, padding='SAME', W_init=w_init, name='f2')
+        f2 = Conv2d(f2, MIDDLE_CHANNEL, (3, 3), (1, 1), dilation_rate=(4, 4), act=lrelu, padding='SAME', W_init=w_init, name='f3')
+        
+        low_res_features =  ElementwiseLayer([f2, f1], combine_fn=tf.add, name='outadd1')     
+        
+        low_res_features = Conv2d(low_res_features, MIDDLE_CHANNEL, (3, 3), (1, 1), dilation_rate=(8, 8), act=lrelu, padding='SAME', W_init=w_init, name='f4')
+        #stack = StackLayer([pre_pre_features,pre_features, t_features,  ], axis=1, name='stack')
+        
+        #time_features = ConvLSTMLayer(stack, (32,40), n_steps=2, name = 'lstm1', return_last = False, feature_map = MIDDLE_CHANNEL)
+        
+        #low_res_features = ConvLSTMLayer(time_features, (32,40), n_steps=2, name = 'lstm2', return_last = True, feature_map = MIDDLE_CHANNEL)
+        
+        low_res_features =  ElementwiseLayer([t_firt, low_res_features], combine_fn=tf.add, name='outadd2')
                 
         hr = Conv2d(low_res_features, SCALE*SCALE*C, (3, 3), (1, 1), act=None, padding='SAME', W_init=w_init, name='lastconv')
         hr = SubpixelConv2d(hr, scale=SCALE, n_out_channel = C, act=relu1, name='pixelshufflerx2/2')  # type: object

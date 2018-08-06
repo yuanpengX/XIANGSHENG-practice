@@ -56,10 +56,11 @@ class DataLoader():
         self.test_hr_files = self.hr_files[self.capacity + self.valid_size:]
         
         #
-        self.MAX_TEST = int(self.test_lr_files[0].split('/')[-1].split('_')[0])
-        self.MIN_TEST = int(self.test_lr_files[-1].split('/')[-1].split('_')[0])
-        print(self.MIN_TEST)
-        print(self.MAX_TEST)
+        min_in = int(self.test_lr_files[0].split('/')[-1].split('_')[0])
+        max_in  = int(self.test_lr_files[-1].split('/')[-1].split('_')[0])
+        self.MIN_TEST = min(min_in, max_in)
+        self.MAX_TEST =  max(min_in, max_in)
+        
         if PRE_LOAD:
             if DEBUG:
                 start = datetime.now()
@@ -84,6 +85,7 @@ class DataLoader():
         self.train_index = 0
         self.valid_index = 0
         self.test_index = 0
+        
         
     def get_batch(self, index, capacity, lr_images, hr_images, lr_files, hr_files):
         if index + self.batch_size > capacity :
@@ -180,25 +182,25 @@ class DataLoader():
             elif not self.one_frame:
                 if self.test_index > self.MAX_TEST:
                     self.test_index = self.MIN_TEST
-                if self.test_index  % 256 ==0:
+                if self.test_index  % FRAME ==0:
                     pre_name = self.test_index
                 else:
                     pre_name = self.test_index - 1
-                if pre_name % 256 == 0:
+                if pre_name % FRAME == 0:
                     pre_pre_name = pre_name
                 else:
                     pre_pre_name = pre_name - 1
                 if USE_NOISE == False:
-                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]
-                    lr_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]                   
-                    pre_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_name, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]                      
-                    pre_pre_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_pre_name, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)] 
+                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+                    lr_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                   
+                    pre_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_name, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                      
+                    pre_pre_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_pre_name, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)] 
                 else:
                     
-                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]
-                    lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)), kernel],2) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]                                        
-                    pre_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_name, i, j)),kernel],2) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]
-                    pre_pre_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_pre_name, i, j)),kernel],2) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]
+                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+                    lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)), kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                                        
+                    pre_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_name, i, j)),kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+                    pre_pre_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(pre_pre_name, i, j)),kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
                 self.test_index += 1    
                 lr_images = np.array(lr_images)                
                 hr_images = np.array(hr_images)
@@ -209,11 +211,11 @@ class DataLoader():
                 if self.test_index > self.MAX_TEST:
                     self.test_index = self.MIN_TEST
                 if USE_NOISE == False:
-                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]
-                    lr_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]                                        
+                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+                    lr_images = [load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                                        
                 else:
-                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]
-                    lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)),kernel],2) for i in range(PATCH_SCALE) for j in range(PATCH_SCALE)]                                        
+                    hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+                    lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)),kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                                        
                 self.test_index += 1    
                 lr_images = np.array(lr_images)                
                 hr_images = np.array(hr_images)
@@ -335,15 +337,100 @@ class DataLoader():
             
             self.valid_index += BATCH_SIZE
     
+
+
+class FrameDataLoader():
+    val_start = 0
+    test_start = 0
+    def __init__(self, total = 4596):
     
+        self.total_movie = total
+        self.val_start = int(total * 0.7)  
+        self.test_start = int(total * 0.9)        
+       
+        
+        self.train_index = 0        
+        self.val_index = self.val_start
+        self.test_index = self.test_start
+        
+        self.kernel = self.generate_kernel()
+        
+    def _train_generator(self, index, start, end):
+        
+        while True:
+            hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+            lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.test_index, i, j)), kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                  
+            yield np.array(lr_images), np.array(hr_images)
+            index +=1
+            if index >= end:
+               index = start  
+               
+    def train_generator(self):
+        
+        while True:
+            hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.train_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+            lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.train_index, i, j)), self.kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                  
+            yield np.array(lr_images), np.array(hr_images)
+            self.train_index +=1
+            if self.train_index >= self.val_start:
+               self.train_index = 0 
+               self.kernel = self.generate_kernel()
+        
+    def valid_generator(self):        
+        while True:
+            hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.val_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+            lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.val_index, i, j)), self.kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                  
+            yield np.array(lr_images), np.array(hr_images)
+            self.val_index +=1
+            if self.val_index >= self.test_start:
+               self.val_index = self.val_start
+               self.kernel = self.generate_kernel()
+                
+    def get_capacity(self):    
+        return (self.val_start) * BATCH_SIZE      
+        
+    def get_valid_size(self):
+        return int(self.test_start - self.val_start) * BATCH_SIZE
+    
+    def get_next_train_batch(self):
+        hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.train_index, i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+        lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.train_index, i, j)), self.kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                  
+        
+        self.train_index +=1
+        if self.train_index >= self.val_start:
+           self.train_index = 0
+           self.kernel = self.generate_kernel()        
+        return np.array(lr_images), np.array(hr_images)
+        
+    def get_next_valid_batch(self):
+        hr_images = [load_image(BASE_DIR + HR_DIR +'/'+ '%d_%d_%d.bmp'%(self.val_index , i, j)) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]
+        lr_images = [np.concatenate([load_image(BASE_DIR + LR_DIR +'/'+ '%d_%d_%d.bmp'%(self.val_index , i, j)), self.kernel],2) for i in range(PATCH_SCALE_X) for j in range(PATCH_SCALE_Y)]                  
+        
+        self.val_index +=1
+        if self.val_index >= self.test_start:
+           self.val_index = self.val_start
+           #self.kernel = self.generate_kernel()
+        return np.array(lr_images), np.array(hr_images)
+    def generate_kernel(self):
+    
+        '''
+        By now, we only provids Two types of kernel
+        '''
+        
+        noise_level = 15#randint(0, 75)
+        
+        degration = construct_degration(None, None, noise_level) 
+
+        return degration
 if __name__ == '__main__':
-    dataloader = DataLoader()
-    
+    dataloader = FrameDataLoader()
+    """
     a,b = dataloader.get_next_test_batch()
     print('test lr shape: ', a.shape)
     print('test hr shape:', b.shape)
     print('max lr is: ', a.max())
     print('max hr is:', b.max())
+    """
     a,b = dataloader.get_next_train_batch()
     print('train lr shape: ', a.shape)
     print('train hr shape:', b.shape)
